@@ -43,7 +43,7 @@ It only assists with faster interaction.
 
 ## 🔥 Evolution
 
-* **v1** → Python Playwright bot
+* **v1** → Python Playwright bot(https://github.com/Abd008/Ticket-Booking-Agent)
 * **v2** → Chrome Extension (this repo)
 
 ---

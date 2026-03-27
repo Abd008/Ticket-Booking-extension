@@ -221,13 +221,29 @@
                 }
             }
 
-            // STEP 2: Fill contact number
+            // STEP 2: Fill contact number (try multiple selectors)
             let contactInput = document.querySelector('input[formcontrolname*="mobile"], input[formcontrolname*="phone"], input[placeholder*="Contact"], input[placeholder*="Mobile"]');
-            log('Step 2: contactInput found = ' + (!!contactInput) + ', has mobile = ' + (!!p.mobile));
+            if (!contactInput) {
+                // Fallback: search all inputs for mobile/contact pattern
+                contactInput = Array.from(document.querySelectorAll('input[type="text"]')).find(inp => {
+                    const name = inp.getAttribute('name') || '';
+                    const ph = inp.getAttribute('placeholder') || '';
+                    const fc = inp.getAttribute('formcontrolname') || '';
+                    return /mobile|phone|contact|telephone/i.test(name + ph + fc);
+                });
+            }
+
+            log('Step 2: contactInput found = ' + (!!contactInput) + ', contact field visible = ' + (contactInput ? isVisible(contactInput) : 'N/A'));
             if (contactInput && p.mobile) {
-                setNativeValue(contactInput, p.mobile);
-                log('Filled contact: ' + p.mobile);
-                await humanDelay(100, 150);
+                try {
+                    setNativeValue(contactInput, p.mobile);
+                    log('Step 2: Filled contact = ' + p.mobile);
+                    await humanDelay(100, 150);
+                } catch (e) {
+                    log('Step 2: Contact fill error: ' + e.message);
+                }
+            } else if (!contactInput) {
+                log('Step 2: Contact field not found on form');
             }
 
             // STEP 3: Handle insurance (if present) — decline/no insurance
@@ -257,7 +273,8 @@
             log('Step 5: continueBtn found = ' + (!!continueBtn) + ', text = ' + (continueBtn?.innerText?.slice(0, 20) || 'null'));
             if (continueBtn && /Continue/i.test(continueBtn.innerText)) {
                 clickElement(continueBtn);
-                log('Clicked Continue button');
+                log('Clicked Continue button, waiting for CAPTCHA page...');
+                await humanDelay(500, 1000);
                 return { status: 'continue-clicked' };
             } else {
                 log('Continue button not found or wrong text');
@@ -265,6 +282,97 @@
             }
         } catch (err) {
             log('fillPassengerForm error: ' + err);
+            return { status: 'error', error: String(err) };
+        }
+    }
+
+    // Handle CAPTCHA page — focus field and wait for user input
+    async function handleCaptchaPage() {
+        try {
+            log('Step 6: Continue clicked, waiting for page transition...');
+            await humanDelay(1500, 2500); // give page time to navigate
+
+            // Check for error messages first
+            const errorElement = document.querySelector('.error-message, .alert-danger, [class*="error"], [role="alert"]');
+            if (errorElement && isVisible(errorElement)) {
+                log('Step 6-error: Error message detected: ' + (errorElement.innerText || '').slice(0, 100));
+                return { status: 'page-error', error: errorElement.innerText };
+            }
+
+            // Check current URL for context
+            const currentUrl = window.location.href;
+            log('Step 6-debug: Current URL = ' + currentUrl.slice(-50));
+
+            // Check for various page indicators
+            const hasPassengerForm = !!document.querySelector('input[formcontrolname="passengerName"]');
+            const hasCaptchaForm = !!document.querySelector('input[formcontrolname="captcha"], img.captcha-img');
+            const hasPaymentForm = !!document.querySelector('[class*="payment"], [class*="payment-mode"]');
+            const hasReviewPage = !!document.querySelector('[class*="review"], [class*="summary"], [class*="confirmation"]');
+
+            log('Step 6-debug: hasPassenger=' + hasPassengerForm + ', hasCaptcha=' + hasCaptchaForm + ', hasPayment=' + hasPaymentForm + ', hasReview=' + hasReviewPage);
+
+            // If CAPTCHA form exists, find and focus the input
+            if (hasCaptchaForm) {
+                log('Step 6: CAPTCHA form detected, looking for input field...');
+
+                // Find all possible CAPTCHA elements
+                const captchaInputs = Array.from(
+                    document.querySelectorAll('input[formcontrolname="captcha"], input#captcha, input[name="captcha"]')
+                );
+
+                const visibleInputs = captchaInputs.filter(inp => isVisible(inp));
+
+                if (visibleInputs.length === 0) {
+                    log('Step 6: Found CAPTCHA form but no visible input (' + captchaInputs.length + ' total)');
+                    return { status: 'captcha-form-no-input' };
+                }
+
+                const captchaInput = visibleInputs[0];
+                log('Step 6: CAPTCHA input ready (' + visibleInputs.length + ' visible of ' + captchaInputs.length + ')');
+
+                // Aggressive focus to ensure cursor is visible and blinking
+                captchaInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                await humanDelay(400, 600);
+
+                // Multiple focus methods to ensure cursor appears
+                captchaInput.focus({ preventScroll: false });
+                captchaInput.click();
+                captchaInput.select(); // Select all (may make cursor more visible)
+                captchaInput.dispatchEvent(new FocusEvent('focus', { bubbles: true, composed: true }));
+                captchaInput.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+                captchaInput.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                captchaInput.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+                // Force cursor to start position
+                captchaInput.setSelectionRange(0, 0);
+
+                await humanDelay(200, 300);
+                log('Step 6-ready: CAPTCHA field focused. Cursor blinking — type CAPTCHA and press Enter.');
+
+                // Wait for user input
+                return new Promise((resolve) => {
+                    const onKeyDown = (e) => {
+                        if (e.key === 'Enter' && captchaInput.value.length > 0) {
+                            captchaInput.removeEventListener('keydown', onKeyDown);
+                            log('Step 6: CAPTCHA submitted (' + captchaInput.value.length + ' chars)');
+                            resolve({ status: 'captcha-submitted', value: captchaInput.value });
+                        }
+                    };
+                    captchaInput.addEventListener('keydown', onKeyDown);
+
+                    // 5 minute timeout
+                    setTimeout(() => {
+                        captchaInput.removeEventListener('keydown', onKeyDown);
+                        log('Step 6: CAPTCHA input timeout (no Enter pressed)');
+                        resolve({ status: 'captcha-timeout' });
+                    }, 300000);
+                });
+            } else {
+                log('Step 6-info: No CAPTCHA form found. Page may show review/confirmation instead.');
+                return { status: 'no-captcha-form', pageInfo: { hasPayment: hasPaymentForm, hasReview: hasReviewPage } };
+            }
+        } catch (err) {
+            log('Step 6-error: ' + err.message);
             return { status: 'error', error: String(err) };
         }
     }
@@ -425,12 +533,21 @@
                     log('Calling fillPassengerForm with ' + config.passengers.length + ' passengers');
                     const fillRes = await fillPassengerForm(config.passengers);
                     log('Passenger form status: ' + (fillRes?.status || 'unknown'));
+
+                    // If passenger form was successfully filled and Continue was clicked, handle CAPTCHA
+                    if (fillRes && fillRes.status === 'continue-clicked') {
+                        log('Continue was clicked, now handling CAPTCHA page...');
+                        const captchaRes = await handleCaptchaPage();
+                        log('CAPTCHA handling result: ' + (captchaRes?.status || 'unknown'));
+
+                        if (captchaRes && (captchaRes.status === 'captcha-entered' || captchaRes.status === 'captcha-timeout-with-value')) {
+                            log('CAPTCHA was entered, waiting for payment/confirmation...');
+                        }
+                    }
                 } else {
                     log('No passengers in config');
                 }
 
-                // at this point user manual intervention for CAPTCHA/payment is likely required
-                log('Waiting for user CAPTCHA/payment steps...');
                 // clear running flag
                 try { chrome.storage.local.set({ automationRunning: false }); } catch (e) { }
                 _running = false;

@@ -54,94 +54,6 @@
             el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
             el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
             return true;
-            async function searchAndBook(config) {
-                try {
-                    // click Search button
-                    let searchBtn = document.querySelector("button[title*='Search']") || document.querySelector("button[aria-label*='Search']");
-                    if (!searchBtn) searchBtn = Array.from(document.querySelectorAll('button,input[type="button"],input[type="submit"]')).find(b => /Search Trains|Search/i.test((b.innerText || b.value || '').trim()) && isVisible(b));
-                    if (searchBtn) { clickElement(searchBtn); log('Clicked Search'); }
-                    else { log('Search button not found'); }
-
-                    await waitForElement('.train-heading, .train-name, .result-list', document, 10000);
-
-                    // find train row by number or name
-                    let trainRow = null;
-                    const trainHeads = Array.from(document.querySelectorAll('.train-heading, .train-name, .result-list .row, .trainRow, .train-info'));
-                    if (config.trainNumber) trainRow = trainHeads.find(h => (h.innerText || '').includes(config.trainNumber));
-                    if (!trainRow && config.trainName) trainRow = trainHeads.find(h => (h.innerText || '').toLowerCase().includes(config.trainName.toLowerCase()));
-                    if (!trainRow) trainRow = trainHeads[0] || document.querySelector('.train-heading');
-                    if (!trainRow) { log('Train row not found'); return { status: 'no-train' }; }
-
-                    const container = trainRow.closest('div') || trainRow.parentElement || document;
-
-                    // select class tab (e.g., Sleeper/SL/3A/2A)
-                    const classHint = (config.travelClass || config.coach || config.class || '').toString().trim().toLowerCase();
-                    const tabCandidates = Array.from(container.querySelectorAll('button, a, li, div, span'));
-                    let classEl = null;
-                    if (classHint) {
-                        classEl = tabCandidates.find(el => {
-                            const t = (el.innerText || '').toLowerCase();
-                            if (!t) return false;
-                            if (t.includes(classHint)) return true;
-                            const code = classHint.replace(/[^a-z0-9]/g, '');
-                            return code && t.includes(code);
-                        });
-                    }
-                    // fallback: find common class labels
-                    if (!classEl) {
-                        const common = ['sleeper', 'sl', 'ac 3', '3a', 'ac 2', '2a', 'chair', 'cc', '1a', 'first'];
-                        for (const c of common) {
-                            classEl = tabCandidates.find(el => (el.innerText || '').toLowerCase().includes(c));
-                            if (classEl) break;
-                        }
-                    }
-                    if (classEl) { clickElement(classEl); log('Clicked class tab: ' + (classEl.innerText || '')); }
-                    else { log('Class tab not found — continuing without explicit class click'); }
-
-                    // wait for availability panel under container
-                    await waitForElement('.pre-avl, .availability, .avail, .availability-panel, .journey-dates', container, 6000);
-
-                    // find date/availability cells
-                    const cellSelectors = ['.pre-avl', '.avail .day', '.availability .day', '.availability td', '.journey-dates .day', '.day'];
-                    let cells = cellSelectors.flatMap(s => Array.from(container.querySelectorAll(s))).filter(Boolean);
-                    // filter visible
-                    cells = cells.filter(c => isVisible(c));
-
-                    let chosenCell = null;
-                    // if journeyDate provided, match day
-                    if (config.journeyDate) {
-                        const m = (config.journeyDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-                        const dayStr = m ? String(parseInt(m[3], 10)) : null;
-                        if (dayStr) chosenCell = cells.find(c => (c.innerText || '').split('\n').some(l => l.trim() === dayStr));
-                    }
-
-                    // otherwise prefer first AVAILABLE / not 'NOT AVAILABLE'
-                    if (!chosenCell && cells.length) {
-                        chosenCell = cells.find(c => /available|avail|\d+/.test((c.innerText || '').toLowerCase()) && !/not available/i.test(c.innerText || ''));
-                        if (!chosenCell) chosenCell = cells[0];
-                    }
-
-                    if (chosenCell) { clickElement(chosenCell); log('Clicked availability/date cell'); await humanDelay(150, 250); }
-                    else { log('No date/availability cell found'); }
-
-                    // wait for Book Now near container
-                    let bookBtn = null;
-                    for (let i = 0; i < 40; i++) {
-                        bookBtn = Array.from(container.querySelectorAll('button,a,input')).find(el => /Book Now/i.test((el.innerText || el.value || '').trim()) && isVisible(el));
-                        if (bookBtn) break;
-                        // also try global scope
-                        bookBtn = Array.from(document.querySelectorAll('button,a,input')).find(el => /Book Now/i.test((el.innerText || el.value || '').trim()) && isVisible(el));
-                        if (bookBtn) break;
-                        await humanDelay(200, 300);
-                    }
-                    if (bookBtn) { clickElement(bookBtn); log('Clicked Book Now'); return { status: 'book-clicked' }; }
-                    log('Book Now not found');
-                    return { status: 'no-book-btn' };
-                } catch (err) {
-                    log('searchAndBook error: ' + err);
-                    return { status: 'error', error: String(err) };
-                }
-            }
         } catch (e) { return false; }
     }
 
@@ -210,54 +122,95 @@
         return { status: 'done' };
     }
 
-    // Open sleeper tab & choose date & click Book Now
+    // Open class tab, click availability, then Book Now
     async function searchAndBook(config) {
         try {
-            // click Search button
+            // STEP 1: Click Search button
             let searchBtn = document.querySelector("button[title*='Search']") || document.querySelector("button[aria-label*='Search']");
-            if (!searchBtn) searchBtn = Array.from(document.querySelectorAll('button,input[type="button"],input[type="submit"]')).find(b => /Search Trains|Search/i.test((b.innerText || b.value || '').trim()) && isVisible(b));
+            if (!searchBtn) searchBtn = Array.from(document.querySelectorAll('button')).find(b => /Search.*Train|Search/i.test((b.innerText || b.value || '').trim()) && isVisible(b));
             if (searchBtn) { clickElement(searchBtn); log('Clicked Search'); }
             else { log('Search button not found'); }
 
-            await waitForElement('.train-heading', document, 10000);
-
-            // find train row
+            // STEP 2: Wait for train results
+            await waitForElement('.train-heading', document, 12000);
             let trainRow = null;
-            if (config.trainNumber) trainRow = Array.from(document.querySelectorAll('.train-heading')).find(h => (h.innerText || '').includes(config.trainNumber));
-            if (!trainRow && config.trainName) trainRow = Array.from(document.querySelectorAll('.train-heading')).find(h => (h.innerText || '').includes(config.trainName));
+            if (config.trainNumber) {
+                trainRow = Array.from(document.querySelectorAll('.train-heading')).find(h => (h.innerText || '').includes(config.trainNumber));
+            }
             if (!trainRow) trainRow = document.querySelector('.train-heading');
-            if (!trainRow) { log('Train row not found'); return { status: 'no-train' }; }
+            if (!trainRow) { log('No train row found'); return { status: 'no-train' }; }
+            log('Found train: ' + (trainRow.innerText || '').slice(0, 50));
 
-            const container = trainRow.closest('div') || document;
+            // STEP 3: Get the full train container (card/section)
+            const trainContainer = trainRow.closest('.form-group, app-train-avl-enq, div[class*="bull-back"], div[class*="border-all"]') || trainRow.closest('div') || trainRow.parentElement;
 
-            // try open SL tab
-            const preEls = Array.from(container.querySelectorAll('div.pre-avl, .pre-avl, .avail, div.availability, td.pre-avl'));
-            const sl = preEls.find(e => /Sleeper|SL|SLEEPER/i.test(e.innerText || ''));
-            if (sl) { clickElement(sl); log('Opened sleeper/pre-avl'); } else { log('Sleeper pre-avl not found (manual may be required)'); }
-
-            // click preferred date cell
-            if (config.journeyDate) {
-                const d = config.journeyDate;
-                // convert YYYY-MM-DD to dd
-                let day = null;
-                const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-                if (m) day = String(parseInt(m[3], 10));
-                if (day) {
-                    const cells = Array.from(container.querySelectorAll('div.pre-avl, td.pre-avl, .pre-avl'));
-                    const dayCell = cells.find(c => (c.innerText || '').split('\n').some(l => l.trim() === day));
-                    if (dayCell) { clickElement(dayCell); log('Clicked day cell ' + day); }
-                }
+            // STEP 4: Find and click the class tab (pre-avl div) — e.g., "Sleeper (SL)", "AC 3 Tier (3A)", etc.
+            const classHint = (config.travelClass || config.coach || '').toString().trim().toLowerCase();
+            let classTab = null;
+            let preAvlDivs = Array.from(trainContainer.querySelectorAll('div.pre-avl'));
+            // If not found in container, search globally
+            if (preAvlDivs.length === 0) {
+                preAvlDivs = Array.from(document.querySelectorAll('div.pre-avl'));
             }
 
-            // wait for Book Now and click
+            if (classHint && preAvlDivs.length) {
+                classTab = preAvlDivs.find(div => {
+                    const txt = (div.innerText || '').toLowerCase();
+                    if (txt.includes(classHint)) return true;
+                    const code = classHint.replace(/[^a-z0-9]/g, '');
+                    return code && (txt.includes(code) || txt.includes(code.replace(/([0-9])/, '$1 ')));
+                });
+            }
+            // Fallback: click first pre-avl if no match
+            if (!classTab && preAvlDivs.length) classTab = preAvlDivs[0];
+            if (classTab) { clickElement(classTab); log('Clicked class tab: ' + (classTab.innerText || '').slice(0, 30)); await humanDelay(100, 200); }
+            else { log('No class tab (pre-avl) found'); }
+
+            // STEP 5: Wait for availability to load
+            await waitForElement('div, span, table', trainContainer, 5000);
+
+            // STEP 6: Find date/availability cells — look for visible cells with day numbers, "WL", or availability text
+            const allCells = Array.from(trainContainer.querySelectorAll('div, span, td'));
+            let avlCells = allCells.filter(c => {
+                const txt = (c.innerText || '').trim();
+                // Match cells with day numbers (1-31), "WL" prefix, or availability status
+                return txt && (txt.match(/^WL\d+$/) || txt.match(/^\d{1,2}$/) || /available|avail/i.test(txt)) && isVisible(c) && c !== classTab;
+            });
+
+            let chosenCell = null;
+            // If journey date provided, match the specific day
+            if (config.journeyDate) {
+                const m = (config.journeyDate || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                const dayStr = m ? String(parseInt(m[3], 10)) : null;
+                if (dayStr) chosenCell = avlCells.find(c => (c.innerText || '').trim() === dayStr || (c.innerText || '').split('\n').some(l => l.trim() === dayStr));
+            }
+            // Fallback: pick first available cell
+            if (!chosenCell && avlCells.length) {
+                chosenCell = avlCells.find(c => /WL\d+|available|avail/i.test((c.innerText || '').trim()));
+                if (!chosenCell) chosenCell = avlCells[0];
+            }
+
+            if (chosenCell) { clickElement(chosenCell); log('Clicked availability: ' + (chosenCell.innerText || '').slice(0, 20)); await humanDelay(150, 300); }
+            else { log('No availability cell found'); return { status: 'no-avl' }; }
+
+            // STEP 7: Wait for and click Book Now button (class: train_Search, btnDefault, or contains text "Book Now")
             let bookBtn = null;
-            for (let i = 0; i < 40; i++) {
-                bookBtn = Array.from(container.querySelectorAll('button,a,input')).find(el => /Book Now/i.test((el.innerText || el.value || '').trim()) && isVisible(el));
+            for (let retry = 0; retry < 50; retry++) {
+                bookBtn = Array.from(trainContainer.querySelectorAll('button')).find(b => {
+                    const t = (b.innerText || b.value || '').trim();
+                    return /Book Now/i.test(t) && isVisible(b);
+                });
+                if (bookBtn) break;
+                // Also check global scope
+                bookBtn = Array.from(document.querySelectorAll('button')).find(b => {
+                    const t = (b.innerText || b.value || '').trim();
+                    return /Book Now/i.test(t) && isVisible(b);
+                });
                 if (bookBtn) break;
                 await humanDelay(200, 300);
             }
             if (bookBtn) { clickElement(bookBtn); log('Clicked Book Now'); return { status: 'book-clicked' }; }
-            log('Book Now not found');
+            log('Book Now button not found');
             return { status: 'no-book-btn' };
         } catch (err) {
             log('searchAndBook error: ' + err);

@@ -101,25 +101,172 @@
     }
 
     async function fillPassengerForm(passengers = []) {
-        if (!passengers || passengers.length === 0) return { status: 'no-data' };
-        // naive: find the first name input and attempt to fill similar inputs
-        const nameInputs = Array.from(document.querySelectorAll("input[placeholder*='Name'], input[formcontrolname*='name'], input[placeholder*='Passenger']"));
-        for (let i = 0; i < passengers.length; i++) {
-            const p = passengers[i];
-            const input = nameInputs[i] || nameInputs[0];
-            if (input && p.name) setNativeValue(input, p.name);
-            // age
-            const age = document.querySelector("input[formcontrolname*='passengerAge'], input[placeholder*='Age']");
-            if (age && p.age) setNativeValue(age, p.age);
-            // gender
-            const gender = document.querySelector("select[formcontrolname*='passengerGender'], select[aria-label*='Gender']");
-            if (gender && p.gender) { gender.value = p.gender; gender.dispatchEvent(new Event('change', { bubbles: true })); }
-            await humanDelay(60, 140);
+        try {
+            if (!passengers || passengers.length === 0) { log('No passengers provided'); return { status: 'no-data' }; }
+            const p = passengers[0]; // fill first passenger
+            log('Filling passenger: ' + (p.name || 'N/A'));
+
+            // STEP 1: Fill passenger name from autocomplete
+            let nameInput = document.querySelector('input[formcontrolname="passengerName"]');
+            if (!nameInput) nameInput = document.querySelector('input[placeholder*="Name"]');
+            log('Step 1: nameInput found = ' + (!!nameInput));
+            if (nameInput && p.name) {
+                // Clear field first
+                nameInput.value = '';
+                setNativeValue(nameInput, '');
+                await humanDelay(100, 200);
+
+                // Type name fresh — with longer delays per letter to give Angular time to respond
+                log('Step 1a: typing ' + p.name + ' slowly');
+                let earlyClickSuccess = false;
+
+                for (let i = 0; i < p.name.length; i++) {
+                    nameInput.value = p.name.substring(0, i + 1);
+                    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    nameInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: p.name[i] }));
+                    nameInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: p.name[i] }));
+
+                    // After 4th letter, check for and click dropdown immediately
+                    if (i === 3) {
+                        log('Step 1a: typed 4 letters, checking for dropdown...');
+                        await humanDelay(1000, 1500);
+
+                        // Check for dropdown and try to click it
+                        const quickCheck = Array.from(document.querySelectorAll('li.ui-autocomplete-list-item')).filter(s => isVisible(s));
+                        if (quickCheck.length > 0) {
+                            log('Step 1a-early: Found dropdown with ' + quickCheck.length + ' item(s), clicking first...');
+                            try {
+                                quickCheck[0].click();
+                                log('Step 1a-early: Successfully clicked suggestion!');
+                                earlyClickSuccess = true;
+                                await humanDelay(300, 500);
+                                break; // Exit the typing loop
+                            } catch (e) {
+                                log('Step 1a-early: Click failed, continuing with full name typing: ' + e.message);
+                            }
+                        }
+                    } else {
+                        await humanDelay(150, 250); // slower typing: 150-250ms per letter
+                    }
+                }
+
+                // If early click succeeded, skip the rest
+                if (earlyClickSuccess) {
+                    log('Step 1: Early click was successful, moving to Step 2');
+                } else {
+                    nameInput.focus();
+                    log('Step 1b: finished full typing, watching for dropdown...');
+
+                    // Give Angular final render time
+                    await humanDelay(1000, 1500);
+
+                    let suggestions = [];
+
+                    const watchForDropdown = new Promise((resolve) => {
+                        let attempts = 0;
+                        const maxAttempts = 60; // 15 seconds more
+
+                        const checkDropdown = setInterval(() => {
+                            attempts++;
+
+                            // Aggressively trigger events every iteration
+                            nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            nameInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
+
+                            // Strategy 1: Look for rendered list items
+                            const allLis = document.querySelectorAll('li.ui-autocomplete-list-item');
+                            const visibleLis = Array.from(allLis).filter(s => isVisible(s));
+
+                            // Strategy 2: Check if dropdown panel exists
+                            const panel = document.querySelector('.ui-autocomplete-panel, [class*="autocomplete-panel"]');
+                            const panelVisible = panel && isVisible(panel);
+
+                            if (attempts % 5 === 0 || visibleLis.length > 0) {
+                                log('Step 1c.' + attempts + ': found ' + visibleLis.length + ' items, panel visible=' + panelVisible);
+                            }
+
+                            if (visibleLis.length > 0) {
+                                suggestions = visibleLis;
+                                log('Step 1c: DROPDOWN DETECTED at attempt ' + attempts + ' with ' + suggestions.length + ' options');
+                                clearInterval(checkDropdown);
+                                resolve(true);
+                            } else if (attempts >= maxAttempts) {
+                                log('Step 1c: TIMEOUT - no dropdown found after ' + maxAttempts + ' attempts');
+                                clearInterval(checkDropdown);
+                                resolve(false);
+                            }
+                        }, 250);
+                    });
+
+                    await watchForDropdown;
+
+                    if (suggestions.length > 0) {
+                        const firstSuggestion = suggestions[0];
+                        log('Option text: ' + (firstSuggestion.innerText || '').slice(0, 50));
+                        try {
+                            firstSuggestion.click();
+                            log('Clicked first suggestion');
+                            await humanDelay(300, 500);
+                        } catch (e) {
+                            log('Click failed: ' + e.message);
+                        }
+                    }
+                    else {
+                        log('Step 1: no suggestions detected, accepting field as-is');
+                        // Just leave the typed name - it may be validated on form submit
+                        await humanDelay(200, 400);
+                    }
+                }
+            }
+
+            // STEP 2: Fill contact number
+            let contactInput = document.querySelector('input[formcontrolname*="mobile"], input[formcontrolname*="phone"], input[placeholder*="Contact"], input[placeholder*="Mobile"]');
+            log('Step 2: contactInput found = ' + (!!contactInput) + ', has mobile = ' + (!!p.mobile));
+            if (contactInput && p.mobile) {
+                setNativeValue(contactInput, p.mobile);
+                log('Filled contact: ' + p.mobile);
+                await humanDelay(100, 150);
+            }
+
+            // STEP 3: Handle insurance (if present) — decline/no insurance
+            log('Step 3: checking insurance');
+            const noInsuranceRadio = document.querySelector('input[type="radio"][formcontrolname*="insurance"][value*="no"], input[type="radio"][formcontrolname*="insurance"][value*="N"]');
+            if (!noInsuranceRadio) {
+                const insuranceLabels = Array.from(document.querySelectorAll('label')).filter(l => /no.*insurance|decline.*insurance/i.test(l.innerText));
+                log('Step 3: insuranceLabels found = ' + insuranceLabels.length);
+                if (insuranceLabels.length > 0) { clickElement(insuranceLabels[0]); log('Declined insurance'); await humanDelay(100, 150); }
+            } else {
+                clickElement(noInsuranceRadio); log('Declined insurance'); await humanDelay(100, 150);
+            }
+
+            // STEP 4: Select payment mode — BHIM/UPI (value="2")
+            const bhimRadio = document.querySelector('input[type="radio"][name="paymentType"][value="2"]');
+            log('Step 4: bhimRadio found = ' + (!!bhimRadio));
+            if (bhimRadio) {
+                clickElement(bhimRadio);
+                log('Selected BHIM/UPI payment');
+                await humanDelay(150, 250);
+            } else {
+                log('BHIM/UPI radio not found');
+            }
+
+            // STEP 5: Click Continue button
+            let continueBtn = document.querySelector('button[type="submit"].search_btn, button[type="submit"]');
+            log('Step 5: continueBtn found = ' + (!!continueBtn) + ', text = ' + (continueBtn?.innerText?.slice(0, 20) || 'null'));
+            if (continueBtn && /Continue/i.test(continueBtn.innerText)) {
+                clickElement(continueBtn);
+                log('Clicked Continue button');
+                return { status: 'continue-clicked' };
+            } else {
+                log('Continue button not found or wrong text');
+                return { status: 'no-continue' };
+            }
+        } catch (err) {
+            log('fillPassengerForm error: ' + err);
+            return { status: 'error', error: String(err) };
         }
-        // mobile
-        const mob = document.querySelector('#mobileNumber,input#mobileNumber,input[placeholder*="Mobile"]');
-        if (mob && passengers[0] && passengers[0].mobile) setNativeValue(mob, passengers[0].mobile);
-        return { status: 'done' };
     }
 
     // Open class tab, click availability, then Book Now
@@ -267,10 +414,23 @@
             // search and book
             const res = await searchAndBook(config);
             if (res && res.status === 'book-clicked') {
-                // fill passengers
-                if (config.passengers) await fillPassengerForm(config.passengers);
-                // at this point captcha/payment is manual
-                log('Reached passenger form / booking flow — manual steps (CAPTCHA/payment) likely required');
+                log('Book Now clicked, waiting for psgninput page...');
+                // wait for psgninput page to load
+                const formEl = await waitForElement('input[formcontrolname="passengerName"], input[placeholder*="Name"]', document, 10000);
+                if (!formEl) { log('Passenger form NOT loaded after 10s'); _running = false; return { status: 'form-timeout' }; }
+                log('Passenger form loaded');
+
+                // fill passengers and submit form
+                if (config.passengers) {
+                    log('Calling fillPassengerForm with ' + config.passengers.length + ' passengers');
+                    const fillRes = await fillPassengerForm(config.passengers);
+                    log('Passenger form status: ' + (fillRes?.status || 'unknown'));
+                } else {
+                    log('No passengers in config');
+                }
+
+                // at this point user manual intervention for CAPTCHA/payment is likely required
+                log('Waiting for user CAPTCHA/payment steps...');
                 // clear running flag
                 try { chrome.storage.local.set({ automationRunning: false }); } catch (e) { }
                 _running = false;

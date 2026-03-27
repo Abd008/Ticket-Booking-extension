@@ -1,0 +1,39 @@
+{
+    "manifest_version": 3,
+    "name": "QT Tatkal Assistant",
+    "version": "1.0",
+    "description": "Semi-automated assistant to speed up IRCTC Tatkal booking (does not bypass CAPTCHA).",
+    "background": {
+        "service_worker": "background.js"
+    },
+    "permissions": [
+        "storage",
+        "activeTab",
+        "scripting"
+    ],
+    "host_permissions": [
+        "https://www.irctc.co.in/*"
+    ],
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://www.irctc.co.in/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "commands": {
+        "fill-passengers": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+Y"
+            },
+            "description": "Fill passenger details on IRCTC page"
+        }
+    }
+}

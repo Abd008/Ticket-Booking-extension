@@ -11,6 +11,8 @@ insight emerged from the core problem:
 - Pure extensions = manual setup, human dependent start
 - LLM vision agents = slow, expensive, fragile on complex flows
 
+(Idea in nut shell : agent is frontend , extension is backend , llm for robust  )
+welcome to AGentic era
 **The Insight:**
 These don't have to be separate tools.
 They can be layers of one architecture —

@@ -13,6 +13,8 @@ insight emerged from the core problem:
 
 (Idea in nut shell : agent is frontend , extension is backend , llm for robust  )
 welcome to AGentic era
+
+
 **The Insight:**
 These don't have to be separate tools.
 They can be layers of one architecture —
